@@ -1,0 +1,99 @@
+name: Build Sultan hiemz-bilal (lynx / Pixel 7a)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [hiemz-bilal]
+    paths:
+      - '.github/workflows/build-sultan.yml'
+      - 'arch/arm64/configs/gs201_defconfig'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: hiemz-bilal
+          fetch-depth: 1
+
+      - name: Ruang disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc 2>/dev/null || true
+          df -h / | tail -1
+
+      - name: Dependensi
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential bc bison flex libssl-dev \
+            libelf-dev zip unzip curl python3 rsync lz4 liblz4-tool cpio \
+            device-tree-compiler libxml2-utils 2>&1 | tail -2
+
+      - name: Unduh clang (r487747c sesuai build.config.constants)
+        run: |
+          mkdir -p $HOME/tc && cd $HOME/tc
+          URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
+          ok=0
+          for i in 1 2 3 4 5; do
+            echo "unduh clang percobaan $i"
+            curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 \
+                 -C - -o clang.tar.gz "$URL" && gzip -t clang.tar.gz 2>/dev/null && { ok=1; break; }
+            echo "gagal, ulangi..."; sleep 10
+          done
+          [ "$ok" = "1" ] || { echo "UNDUH CLANG GAGAL"; exit 1; }
+          echo "ukuran: $(stat -c%s clang.tar.gz)"
+          mkdir -p clang && tar xzf clang.tar.gz -C clang
+          clang/bin/clang --version | head -2
+
+      - name: Build kernel (gs201, lynx)
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export PATH=$HOME/tc/clang/bin:$PATH
+          export LLVM=1 LLVM_IAS=1
+          export KBUILD_BUILD_USER=hiemz-bilal
+          export KBUILD_BUILD_HOST=github
+          make O=out ARCH=arm64 gs201_defconfig 2>&1 | tail -3
+          set +e
+          make -j$(nproc) O=out ARCH=arm64 Image.lz4 2>&1 | tee $GITHUB_WORKSPACE/build.log | grep -iE "^ *error|error:" | head -10
+          if [ ! -f out/arch/arm64/boot/Image.lz4 ]; then
+            echo "=== BUILD GAGAL, 40 baris error ==="
+            grep -i -m40 "error" $GITHUB_WORKSPACE/build.log | head -40
+            exit 1
+          fi
+          ls -la out/arch/arm64/boot/Image.lz4
+
+      - name: Pack AnyKernel3 (lynx)
+        run: |
+          cd $GITHUB_WORKSPACE
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git ak3
+          cp out/arch/arm64/boot/Image.lz4 ak3/
+          cd ak3
+          rm -f .gitattributes README.md devices.txt
+          sed -i '/^device\.name/d' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=### Sultan hiemz-bilal (lynx) ###/' anykernel.sh
+          sed -i 's/^do.devicecheck=.*/do.devicecheck=1/' anykernel.sh
+          printf 'device.name1=lynx\ndevice.name2=Lynx\ndevice.name3=Pixel 7a\n' > /tmp/dev.txt
+          awk 'NR==FNR{d[NR]=$0;n=NR;next} /^do\.devicecheck=1$/{print; for(i=1;i<=n;i++) print d[i]; next} {print}' /tmp/dev.txt anykernel.sh > anykernel.sh.new
+          mv anykernel.sh.new anykernel.sh
+          echo "--- device ---"; grep "device.name" anykernel.sh
+          zip -r9 ../sultan-hiemz-bilal-lynx.zip . -x '.git/*'
+          cd ..
+          ls -la sultan-hiemz-bilal-lynx.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sultan-hiemz-bilal-lynx
+          path: sultan-hiemz-bilal-lynx.zip
+          retention-days: 14
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
