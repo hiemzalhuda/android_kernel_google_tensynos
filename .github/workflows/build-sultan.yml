@@ -30,16 +30,19 @@ jobs:
             libelf-dev zip unzip curl python3 rsync lz4 liblz4-tool cpio \
             device-tree-compiler libxml2-utils 2>&1 | tail -2
 
-      - name: Unduh clang (r487747c sesuai build.config.constants)
+      - name: Unduh clang (r522817 = clang 17; r487747c tidak tersedia di server Google)
         run: |
           mkdir -p $HOME/tc && cd $HOME/tc
-          URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz"
           ok=0
-          for i in 1 2 3 4 5; do
-            echo "unduh clang percobaan $i"
-            curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 \
-                 -C - -o clang.tar.gz "$URL" && gzip -t clang.tar.gz 2>/dev/null && { ok=1; break; }
-            echo "gagal, ulangi..."; sleep 10
+          for U in \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r522817.tar.gz" \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz"; do
+            for i in 1 2 3; do
+              echo "coba $U (percobaan $i)"
+              curl -fL --retry 3 --retry-delay 5 --connect-timeout 30 --max-time 900 \
+                   -C - -o clang.tar.gz "$U" && gzip -t clang.tar.gz 2>/dev/null && { ok=1; break 2; }
+              echo "gagal, ulangi..."; sleep 8
+            done
           done
           [ "$ok" = "1" ] || { echo "UNDUH CLANG GAGAL"; exit 1; }
           echo "ukuran: $(stat -c%s clang.tar.gz)"
